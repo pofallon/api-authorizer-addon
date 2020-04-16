@@ -1,32 +1,36 @@
-import * as sns from '@aws-cdk/aws-sns';
-import * as subs from '@aws-cdk/aws-sns-subscriptions';
-import * as sqs from '@aws-cdk/aws-sqs';
 import * as cdk from '@aws-cdk/core';
+import * as apigateway from '@aws-cdk/aws-apigateway'
+import * as lambda from '@aws-cdk/aws-lambda'
+import * as path from 'path'
 
-export interface ApiAuthorizerAddonProps {
-  /**
-   * The visibility timeout to be configured on the SQS Queue, in seconds.
-   *
-   * @default Duration.seconds(300)
-   */
-  visibilityTimeout?: cdk.Duration;
+export interface AddOnProps {
+  api: apigateway.RestApi
+  integration: apigateway.Integration
 }
 
-export class ApiAuthorizerAddon extends cdk.Construct {
-  /** @returns the ARN of the SQS queue */
-  public readonly queueArn: string;
+export class AddOn extends cdk.Construct {
 
-  constructor(scope: cdk.Construct, id: string, props: ApiAuthorizerAddonProps = {}) {
+  constructor(scope: cdk.Construct, id: string, props: AddOnProps) {
     super(scope, id);
 
-    const queue = new sqs.Queue(this, 'ApiAuthorizerAddonQueue', {
-      visibilityTimeout: props.visibilityTimeout || cdk.Duration.seconds(300)
-    });
+    const authLambda = new lambda.Function(this, 'AuthLambda', {
+      logRetention: 7,
+      runtime: lambda.Runtime.NODEJS_12_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../auth-lambda'))
+    })
 
-    const topic = new sns.Topic(this, 'ApiAuthorizerAddonTopic');
+    const auth = new apigateway.RequestAuthorizer(this, 'Authorizer', {
+      handler: authLambda,
+      identitySources: [
+        apigateway.IdentitySource.header('Some-Auth-Header')
+      ],
+    })
 
-    topic.addSubscription(new subs.SqsSubscription(queue));
-
-    this.queueArn = queue.queueArn;
+    props.api.root.addMethod('POST', props.integration, { 
+      authorizationType: apigateway.AuthorizationType.CUSTOM,
+      authorizer: auth,
+      methodResponses: [ { statusCode: '200' } ]
+    })
   }
 }
